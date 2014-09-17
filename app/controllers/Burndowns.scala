@@ -24,14 +24,14 @@ object Burndowns extends Controller {
     def projectCluster = {
       s"{${projectIDs.mkString(",")}}"
     }
-    
+
     // A composite actually has a name field
     // That should be used in the future
     def name = {
       val allProjects = listAllProjects
-      
+
       val filteredStubs = allProjects.filter(p => projectIDs.contains(p.phid))
-      
+
       filteredStubs.map(_.name).mkString(" / ")
     }
   }
@@ -288,13 +288,10 @@ object Burndowns extends Controller {
     }
   }
 
-  def getHistoricTasks(compositeID: String) = {
+  case class TaskEntry(taskID: String, estimate: Long, timestamp: DateTime)
 
-    case class TaskEntry(taskID: String, estimate: Long, timestamp: DateTime)
-
-    // This function is embarassingly long.. I can do better
-
-    val allEstimates = DB.withConnection("default") { implicit c =>
+  def getTasksWithEstimates(compositeID: String) = {
+    DB.withConnection("default") { implicit c =>
 
       val sqlQuery = SQL(
         """
@@ -315,6 +312,13 @@ object Burndowns extends Controller {
 
       taskEstimates
     }
+  }
+
+  def getHistoricTasks(compositeID: String) = {
+
+    // This function is embarassingly long.. I can do better
+
+    val allEstimates = getTasksWithEstimates(compositeID)
 
     val estimatesByTask = allEstimates.groupBy(_.taskID).map(est => {
       val taskID = est._1
@@ -359,11 +363,26 @@ object Burndowns extends Controller {
 
     val nextMatrix = finalMatrixList.groupBy(_._1)
 
-    val mappedMatrix = nextMatrix.map(e => (e._1, e._2.map(_._2).sortBy(_.d)))
-    (mappedMatrix, allDates)
+    val mappedMatrix = nextMatrix.map(e => (e._1, e._2.map(_._2).sortBy(_.d))).toList
+    
+    
+    def matrixSorter(a:(String, List[DatedEstimate]), b:(String, List[DatedEstimate])) = {
+      val aNones = a._2.filter(x => x.e.isEmpty).length
+      val bNones = b._2.filter(x => x.e.isEmpty).length
+      
+      if (aNones == bNones) {
+        a._1 < b._1
+      } else {
+        aNones < bNones 
+      }
+    }
+    
+    val sortedMatrix = mappedMatrix.sortWith(matrixSorter)
+    
+    (sortedMatrix, allDates)
   }
 
-  def generateSummaries(estimateMatrix: Map[String, List[DatedEstimate]]) = {
+  def generateSummaries(estimateMatrix: List[(String, List[DatedEstimate])]) = {
     val estimatesByDate = estimateMatrix.map(x => x._2).flatten.groupBy(_.d)
 
     val sumsByDate = estimatesByDate.map(ed => {

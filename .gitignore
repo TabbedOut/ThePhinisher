@@ -19,3 +19,4 @@ activator-launch-1.2.1.jar
 activator.bat
 application.conf
 data
+data-dev
