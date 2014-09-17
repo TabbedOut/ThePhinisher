@@ -1,0 +1,54 @@
+@import org.joda.time.DateTime
+@import org.joda.time.format._
+
+@(estimates: Map[String, List[Burndowns.DatedEstimate]], dates: List[DateTime], 
+	summaries: List[Burndowns.DatedEstimate], trend:List[Long])
+
+@main("Burn it all down") {
+	
+	<div class="container">
+		<div class="row">
+			<div class="col-md-12">
+				<table class="table">
+					<tr>
+						<th>Task ID</th>
+						@defining(DateTimeFormat.forPattern("yyyy-MM-dd")) { dateFormatter => 
+							@for(d <- dates) {
+							<th>@{dateFormatter.print(d)}</th>
+							
+							}
+						}
+					</tr>
+					
+					@for(hte <- estimates){
+					<tr>
+						<td>@{hte._1}</td>
+						@for(de <- hte._2) {
+						<td>@{de.e}</td>
+						}
+					</tr>
+					} 
+						<tr class="success">
+							<td>Work Hours</td>
+							@for(est <- summaries) {
+							<td>@{est.e}</td>
+							}
+						</tr>
+						<tr class="success">
+							<td>Work Days</td>
+							@for(est <- summaries) {
+							<td>@{(est.e.getOrElse(0L)) / 8}</td>
+							}
+						</tr>
+						<tr class="success">
+							<td>Trend (days)</td>
+							@for(t <- trend) {
+							<td>@{t / 8}</td>
+							}
+						</tr>
+				</table>
+			</div>
+		</div>
+	
+	</div>
+}

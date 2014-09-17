@@ -1,0 +1,17 @@
+# Routes
+# This file defines all application routes (Higher priority routes first)
+# ~~~~
+
+# Home page
+GET     /                           	controllers.Application.index
+
+GET 	/burndowns/						controllers.Burndowns.index
+GET 	/burndowns/:projectID/			controllers.Burndowns.burndownByProject(projectID)
+GET		/burndowns/history/:compositeID	controllers.Burndowns.historicData(compositeID)
+
+# AJAX
+POST	/burndowns/save/:compositeID	controllers.Burndowns.saveSnapshotViaAjax(compositeID)
+GET		/jsroutes						controllers.JavascriptRouter.javascriptRoutes
+
+# Map static resources from the /public folder to the /assets URL path
+GET     /assets/*file               	controllers.Assets.at(path="/public", file)

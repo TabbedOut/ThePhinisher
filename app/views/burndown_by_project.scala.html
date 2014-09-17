@@ -1,0 +1,127 @@
+@(compositeID: Long, title: String, 
+	tasks: List[Burndowns.Task], 
+	phabUrl:String, 
+	totalHours:Long,
+	hasPrevious: Boolean
+	) 
+
+@main("Burn it all down") {
+
+<div class="container">
+	<div class="row">
+		<div class="col-md-1">
+			[<a href="@routes.Burndowns.index">Home</a>]
+		</div>
+	</div>
+	<div class="row">
+		<div class="col-md-1">
+			<h1>@{compositeID}</h1>
+		</div>
+		<div class="col-md-11"><h1>@title</h1>
+		</div>
+	</div>
+	<div class="row">
+		@* This is a bad idea
+		<div class="col-md-2">
+		 	<button id="openAllTasks" type="submit" class="btn btn-info">Open Tasks New Tabs</button>
+		</div> 
+		
+		*@
+		<div class="col-md-2">
+		 	<button id="saveBurndown" type="submit" class="btn btn-info">
+		 		<span class="glyphicon glyphicon-floppy-disk"></span>
+		 	Save Snapshot</button>
+		 	<span id="saveBurndownMessage"></span>
+		</div>
+		<div class="col-md-2">
+			@if(hasPrevious) {
+			 <a href="@routes.Burndowns.historicData(compositeID.toString)">Previous Burndowns</a>
+			}
+		</div>
+		<script>
+			var saveSuccess = function(data, status, jqXHR) {
+				$("#saveBurndown").hide();
+				$("#saveBurndownMessage").text("Saved");
+			};
+			
+			var saveFailure = function(jqXHR, status, error) {
+				alert("failure: " + status + " " + error);
+			}
+			$("#saveBurndown").click(function(){
+				 jsRoutes.controllers.Burndowns.saveSnapshotViaAjax(@{compositeID}).ajax({
+					 data : JSON.stringify("{}"),
+					 contentType : 'application/json'
+				 })
+				  .done( saveSuccess )
+				  .fail( saveFailure );
+			});
+		</script>
+	</div>
+	<div class="row">
+		<div class="col-md-2">
+		&nbsp;
+		</div>
+	</div>
+	<div class="row">
+		<div class="col-md-12">
+			<table class="table">
+				<tr>
+					<th>Total Hours</th>
+					<th>Total Days</th>
+				</tr>
+				<tr>
+					<td>@totalHours</td>
+					<td>@{totalHours / 8}</td>
+				</tr>
+			</table>
+		</div>
+	</div>
+	<div class="row">
+		
+	
+		<div class="col-md-12">
+			<table class="table">
+				<tr>
+					<th></th>
+					<th>Task</th>
+					<th>Est. Hours</th>
+					<th>Title</th>
+					<th>Assignee</th>
+				</tr>
+				@for(task <- tasks) {
+			
+				<tr id="taskRow@{task.taskID}" class="@if(task.priority==90 || task.hours.isEmpty){needsTriage}">
+					<td>
+						<button type="button" class="btn btn-xs btn-success" id="hide@{task.taskID}">
+							<span class="glyphicon glyphicon-ok-circle"></span>
+						</button>
+					</td>
+					<td><a href="@{phabUrl + task.taskID}">@{task.taskID}</a></td>
+					<td>@{task.hours.getOrElse("n/a")}</td>
+					<td>@{task.title}</td>
+					<td>@{task.assignee}</td>
+				</tr>
+				<script>
+					$("#hide@{task.taskID}").click(function(){
+						$("#taskRow@{task.taskID}").addClass("finishedRow");
+					})
+				</script>
+				}
+				
+			</table>
+		</div>
+	</div>
+</div>
+
+<script>
+
+	$('#openAllTasks').click(function () {
+		var taskUrls = [ @{play.twirl.api.Html(tasks.map(task => "'" + phabUrl + task.taskID +"'" ).mkString(","))} ];
+		
+		for(index in taskUrls) {
+			var win = window.open(taskUrls[index], '_blank');
+			win.focus();
+		}
+	});
+</script>
+}

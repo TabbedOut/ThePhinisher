@@ -1,0 +1,27 @@
+The Phinisher
+=============
+
+Project management for Phabricator. Phabricator has some useful fields when it comes to 
+tracking time and estimation, but there's no decent way to unify it.
+
+This project exists solely because I refuse to learn PHP to actually add this into the
+main Phabricator ecosystem. 
+
+
+Expected Configuration
+----------------------
+
+For this to work correctly, some assumptions are made.
+
+Set up an Estimated Hours field in Maniphest:
+
+    "phinisher:time-estimation"    : {
+        "name"    : "Estimated Hours",
+        "type"    : "int",
+        "caption" : "Estimated number of hours this will take."
+    },
+    
+After that is set up, these will exist in the 
+    `phabricator_maniphest`.`maniphest_customfieldstorage`
+table, the fieldIndex will need to be stored in the application.conf
+in the `phabricator.estimatedHoursKey` value

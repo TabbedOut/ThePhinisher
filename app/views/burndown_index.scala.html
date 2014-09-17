@@ -1,0 +1,88 @@
+@(projects: List[Burndowns.ProjectStub])
+
+@main("Burn it all down") {
+
+	<div class="container">
+	
+		<div class="row">
+			<div class="col-md-8">
+			
+				<form class="" role="form">
+                <div class="input-group">
+                  <input type="text" class="form-control token-field" id="projectTokens" value="" />
+                  <span class="input-group-btn">
+                    <button class="btn btn-default" type="button" id="burnProjects">Burn</button>
+                  </span>
+                </div>
+                
+              </form>
+
+				<script>
+				
+				var engine = new Bloodhound({
+					  local: [
+					          @{play.twirl.api.Html(projects.map(p => "{label: \"" + p.phid + "\", value:\"" + p.name + "\"}").toList.mkString(","))}
+					        
+					          ],
+					  datumTokenizer: function(d) {
+				
+					    return Bloodhound.tokenizers.whitespace(d.value); 
+					  },
+					  queryTokenizer: Bloodhound.tokenizers.whitespace,
+					  limit: 40
+					});
+				
+				engine.initialize();
+
+				$('#projectTokens').tokenfield({				
+	  				showAutocompleteOnFocus: false,
+	  				typeahead: [null, { source: engine.ttAdapter() }]
+				})
+				.on('tokenfield:createtoken', function(e){
+					//alert("val: " + e.attrs.value + " / label:" + e.attrs.label);
+					// swap them since the typeahead is backwards
+					if (e.attrs.value.indexOf("PHID") != 0 ) {
+						var tmp = e.attrs.value;
+						e.attrs.value = e.attrs.label;
+						e.attrs.label = tmp;
+					}
+				})
+				.on('tokenfield:removedtoken', function (e) {
+					$("#addProject"+e.attrs.value).show();
+  				});
+				
+				$("#burnProjects").click(function(){
+					var projectIDs = $('#projectTokens').tokenfield('getTokensList',',',false);
+
+					var newUrl = '{' + projectIDs + '}';
+					window.open(@routes.Burndowns.index() + newUrl + '/', "_self");
+				});
+				</script>
+			</div>
+			
+			
+		</div>
+	
+    @for(stub <- projects) {
+      
+      <div class="row top-buffer">
+      	<div class="col-md-5">
+      		<button id="addProject@{stub.phid}" type="submit" class="btn btn-success btn-xs">
+      	   		<span class="glyphicon glyphicon-plus"></span>
+      	   	</button>
+      		<a href="@routes.Burndowns.burndownByProject(stub.phid)">@{stub.name}</a>
+      	</div>
+      </div>
+      
+      <script>
+      	$("#addProject@{stub.phid}").click(function() {
+      		$('#projectTokens').tokenfield('createToken', { value: '@{stub.phid}', label: '@{stub.name}' });
+      		$("#addProject@{stub.phid}").hide();
+      	});
+      </script>
+    }
+    
+    </div>
+    
+
+}
