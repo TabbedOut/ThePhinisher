@@ -20,6 +20,21 @@ object Burndowns extends Controller {
   case class HistoricTaskEstimates(taskID: String, estimates: List[Long]) {}
   case class DatedEstimate(d: DateTime, e: Option[Long])
   case class Task(taskID: String, title: String, priority: Long, hours: Option[String], assignee: Option[String])
+  case class CompositeProject(id: Long, projectIDs: List[String]) {
+    def projectCluster = {
+      s"{${projectIDs.mkString(",")}}"
+    }
+    
+    // A composite actually has a name field
+    // That should be used in the future
+    def name = {
+      val allProjects = listAllProjects
+      
+      val filteredStubs = allProjects.filter(p => projectIDs.contains(p.phid))
+      
+      filteredStubs.map(_.name).mkString(" / ")
+    }
+  }
 
   def listAllProjects = {
     DB.withConnection("phabricator") { implicit c =>
@@ -81,7 +96,9 @@ object Burndowns extends Controller {
   def index = Action {
     val projects = listAllProjects
 
-    Ok(views.html.burndown_index(projects))
+    val composites = listAllComposites
+
+    Ok(views.html.burndown_index(projects, composites))
   }
 
   def extractProjectIDs(projectBase: String) = {
@@ -95,10 +112,8 @@ object Burndowns extends Controller {
     }
   }
 
-  case class CompositeProject(id: Long, projectIDs: List[String]) {}
-
-  def detectCompositeBurndown(projectIDs: List[String]): Option[Long] = {
-    val candidateProjects = DB.withConnection("default") { implicit c =>
+  def listAllComposites() = {
+    DB.withConnection("default") { implicit c =>
 
       val sqlQuery = SQL(
         """
@@ -116,6 +131,10 @@ object Burndowns extends Controller {
 
       projects
     }
+  }
+
+  def detectCompositeBurndown(projectIDs: List[String]): Option[Long] = {
+    val candidateProjects = listAllComposites
 
     Logger.info(candidateProjects mkString (":"))
 

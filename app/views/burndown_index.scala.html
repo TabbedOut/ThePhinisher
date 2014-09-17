@@ -1,21 +1,39 @@
-@(projects: List[Burndowns.ProjectStub])
+@(projects: List[Burndowns.ProjectStub], composites: List[Burndowns.CompositeProject])
 
 @main("Burn it all down") {
 
 	<div class="container">
 	
 		<div class="row">
+			<div class="col-md-12">
+				<h1>Existing Projects to Burn Down</h1>
+			</div>
+		</div>
+		
+		@for(composite <- composites){
+		<div class="row">
+			<div class="col-md-12">
+				<a href="@routes.Burndowns.burndownByProject(composite.projectCluster)">@{composite.name}</a>
+			</div>
+		</div>
+		}
+	
+		<div class="row">
+			<div class="col-md-12">
+				<h1>Select Projects to Burn Down</h1>
+			</div>
+		</div>
+		<div class="row">
 			<div class="col-md-8">
 			
 				<form class="" role="form">
-                <div class="input-group">
-                  <input type="text" class="form-control token-field" id="projectTokens" value="" />
-                  <span class="input-group-btn">
-                    <button class="btn btn-default" type="button" id="burnProjects">Burn</button>
-                  </span>
-                </div>
-                
-              </form>
+                	<div class="input-group">
+                		<input type="text" class="form-control token-field" id="projectTokens" value="" />
+                  		<span class="input-group-btn">
+                   			<button class="btn btn-default" type="button" id="burnProjects">Burn</button>
+                  		</span>
+                	</div>
+              	</form>
 
 				<script>
 				
@@ -62,6 +80,8 @@
 			
 			
 		</div>
+		
+
 	
     @for(stub <- projects) {
       
