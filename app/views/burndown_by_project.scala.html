@@ -7,12 +7,15 @@
 
 @main("Burn it all down") {
 
+
+
 <div class="container">
-	<div class="row">
-		<div class="col-md-1">
-			[<a href="@routes.Burndowns.index">Home</a>]
-		</div>
-	</div>
+
+	<ol class="breadcrumb">
+  		<li><a href="@routes.Burndowns.index">Burndowns Home</a></li>
+  		<li class="active">Current Burndown</li>
+	</ol>
+
 	<div class="row">
 		<div class="col-md-1">
 			<h1>@{compositeID}</h1>

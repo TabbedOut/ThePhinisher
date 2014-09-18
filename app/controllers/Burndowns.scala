@@ -433,9 +433,12 @@ object Burndowns extends Controller {
       }
     }
     
-    val compositeProjectName = compositeByID(compositeID.toLong).fold("unknown")(_.name)
+    
+    val composite = compositeByID(compositeID.toLong)
+    
+    val compositeProjectName = composite.fold("unknown")(_.name)
 
-    Ok(views.html.burndown_history(compositeProjectName, estimateMatrix, dates, summaries, trend))
+    Ok(views.html.burndown_history(compositeProjectName, composite.get.projectCluster, estimateMatrix, dates, summaries, trend))
   }
 
 }
