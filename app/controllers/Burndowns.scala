@@ -142,12 +142,7 @@ object Burndowns extends Controller {
       cp.projectIDs.toSet.equals(projectIDs.toSet)
     })
 
-    matches.headOption.flatMap(cp => Some(cp.id))
-
-    matches.headOption match {
-      case Some(cp) => Some(cp.id)
-      case None => createNewComposite(projectIDs)
-    }
+    matches.headOption.fold(createNewComposite(projectIDs))(cp => Option(cp.id))
   }
 
   def createNewComposite(projectIDs: List[String]) = {
@@ -164,7 +159,8 @@ object Burndowns extends Controller {
 
         val insertQuery = SQL(
           """
-            INSERT INTO composite_projects (composite_id, phid) VALUES ({newComposite}, {phid});
+            INSERT INTO composite_projects (composite_id, phid) 
+            VALUES ({newComposite}, {phid});
           """)
 
         projectIDs.foreach(pid => {
@@ -252,14 +248,13 @@ object Burndowns extends Controller {
   def saveTasksForSnapshot(snapshotID: Long, tasks: List[Task]) = {
     DB.withConnection("default") { implicit c =>
       val insertQuery = SQL("""
-          INSERT INTO burndown_tasks (burndown_id, task_id, remaining_estimate) VALUES ({snapshot_id}, {task_id}, {estimate});
+          INSERT INTO burndown_tasks (burndown_id, task_id, remaining_estimate) 
+            VALUES ({snapshot_id}, {task_id}, {estimate});
         """)
 
       tasks.foreach(t => {
-        val estimate = t.hours match {
-          case None => 0
-          case Some(e) => e.toLong
-        }
+        val estimate = t.hours.fold(0L)(_.toLong)
+
         insertQuery.on('snapshot_id -> snapshotID, 'task_id -> t.taskID, 'estimate -> estimate).executeInsert()
       })
     }
@@ -272,7 +267,9 @@ object Burndowns extends Controller {
     // TODO: this is brittle
     val compositeID = compositeKey.toLong
 
-    createNewSnapshot(compositeID) match {
+    val snapshot = createNewSnapshot(compositeID)
+
+    snapshot match {
       case None => BadRequest(Json.obj("result" -> "couldn't create snapshot"))
       case Some(snapshotID) => {
         val projectIDs = projectsFromComposite(compositeID)
@@ -314,10 +311,38 @@ object Burndowns extends Controller {
     }
   }
 
+  def generateBalancedEstimateMatrix(allDates: List[DateTime],
+    allTasks: List[String],
+    estimatesByTask: Map[String, Map[DateTime, Long]]) = {
+
+    val minTasks = estimatesByTask.map {
+      case (taskID, es) => {
+        val minDate = es.reduce((a, b) => if (a._1.isBefore(b._1)) { a } else { b })._1
+        (taskID -> minDate)
+      }
+    }
+
+    def missingReplacement(task: String, date: DateTime) = {
+      minTasks.get(task).fold(Option(0L))(minDate =>
+        if (minDate.isBefore(date)) {
+          Option(0L)
+        } else {
+          None
+        })
+    }
+
+    for {
+      task <- allTasks
+      date <- allDates
+
+      taskEstByDate = estimatesByTask.getOrElse(task, Map())
+      finalEstimate = taskEstByDate.get(date).orElse(missingReplacement(task, date))
+
+    } yield (task, DatedEstimate(date, finalEstimate))
+
+  }
+
   def getHistoricTasks(compositeID: String) = {
-
-    // This function is embarassingly long.. I can do better
-
     val allEstimates = getTasksWithEstimates(compositeID)
 
     val estimatesByTask = allEstimates.groupBy(_.taskID).map(est => {
@@ -329,66 +354,43 @@ object Burndowns extends Controller {
       (taskID -> estMap)
     })
 
-    val allDates = allEstimates.map(_.timestamp).distinct
-    val allTasks = allEstimates.map(_.taskID).distinct
+    def mappedDistinct[B](f: TaskEntry => B): List[B] = allEstimates.map(f).distinct.toList
 
-    val minTasks = estimatesByTask.map(x => {
-      val taskID = x._1
-      val es = x._2
-      val minDate = es.reduce((a, b) => if (a._1.isBefore(b._1)) { a } else { b })._1
-      (taskID -> minDate)
+    val allDates = mappedDistinct(_.timestamp)
+    val allTasks = mappedDistinct(_.taskID)
 
-    })
-
-    val finalMatrixList = for {
-      task <- allTasks
-      date <- allDates
-
-      e = estimatesByTask.getOrElse(task, Map()).get(date) match {
-        case Some(es) => Some(es)
-        case None => {
-          minTasks.get(task) match {
-            case None => Some(0L)
-            case Some(minDate) => {
-              if (minDate.isBefore(date)) {
-                Some(0L)
-              } else {
-                None
-              }
-            }
-          }
-        }
-      }
-    } yield (task, DatedEstimate(date, e))
+    val finalMatrixList = generateBalancedEstimateMatrix(allDates, allTasks, estimatesByTask)
 
     val nextMatrix = finalMatrixList.groupBy(_._1)
 
     val mappedMatrix = nextMatrix.map(e => (e._1, e._2.map(_._2).sortBy(_.d))).toList
-    
-    
-    def matrixSorter(a:(String, List[DatedEstimate]), b:(String, List[DatedEstimate])) = {
-      val aNones = a._2.filter(x => x.e.isEmpty).length
-      val bNones = b._2.filter(x => x.e.isEmpty).length
-      
+
+    def emptyCount(l: List[DatedEstimate]) = l.filter(_.e.isEmpty).length
+
+    def matrixSorter(a: (String, List[DatedEstimate]), b: (String, List[DatedEstimate])) = {
+
+      val aNones = emptyCount(a._2)
+      val bNones = emptyCount(b._2)
+
       if (aNones == bNones) {
         a._1 < b._1
       } else {
-        aNones < bNones 
+        aNones < bNones
       }
     }
-    
+
     val sortedMatrix = mappedMatrix.sortWith(matrixSorter)
-    
+
     (sortedMatrix, allDates)
   }
 
   def generateSummaries(estimateMatrix: List[(String, List[DatedEstimate])]) = {
-    val estimatesByDate = estimateMatrix.map(x => x._2).flatten.groupBy(_.d)
+    val estimatesByDate = estimateMatrix.map(_._2).flatten.groupBy(_.d)
 
     val sumsByDate = estimatesByDate.map(ed => {
       val sum = ed._2.map(_.e.getOrElse(0L)).sum
 
-      DatedEstimate(ed._1, Some(sum))
+      DatedEstimate(ed._1, Option(sum))
     }).toList.sortBy(_.d)
 
     sumsByDate
@@ -404,12 +406,14 @@ object Burndowns extends Controller {
       Nil
     } else {
       val summariesOffset = summaries.head :: (summaries.dropRight(1))
-      summaries.zip(summariesOffset).map(x => {
-        val thisWeek = x._1.e.getOrElse(0L)
-        val lastWeek = x._2.e.getOrElse(0L)
+      summaries.zip(summariesOffset).map {
+        case (thisWeekD, lastWeekD) => {
+          val thisWeek = thisWeekD.e.getOrElse(0L)
+          val lastWeek = lastWeekD.e.getOrElse(0L)
 
-        thisWeek - lastWeek
-      })
+          thisWeek - lastWeek
+        }
+      }
     }
 
     Ok(views.html.burndown_history(estimateMatrix, dates, summaries, trend))
