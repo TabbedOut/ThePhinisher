@@ -58,6 +58,11 @@
 
 .finishedRow {
 	background-color: #666699;
+	color: #DDDDDD;
+}
+
+.finishedRow > td > a {
+	color: #FFFFFF;
 }
 
 /* Spacing for project list */
