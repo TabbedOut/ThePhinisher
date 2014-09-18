@@ -133,10 +133,30 @@ object Burndowns extends Controller {
     }
   }
 
+  def compositeByID(compositeID: Long) = {
+    DB.withConnection("default") { implicit c =>
+
+      val sqlQuery = SQL(
+        """
+          SELECT composite_id, GROUP_CONCAT(phid) AS phids
+          FROM composite_projects
+          WHERE composite_id={composite_id}
+          GROUP BY composite_id
+          ;
+        """).on('composite_id -> compositeID)
+
+      val project = sqlQuery().map(row => {
+        val phids = row[String]("phids").split(",").toList
+
+        CompositeProject(row[Long]("composite_id"), phids)
+      }).toList.headOption
+
+      project
+    }
+  }
+
   def detectCompositeBurndown(projectIDs: List[String]): Option[Long] = {
     val candidateProjects = listAllComposites
-
-    Logger.info(candidateProjects mkString (":"))
 
     val matches = candidateProjects.filter(cp => {
       cp.projectIDs.toSet.equals(projectIDs.toSet)
@@ -172,7 +192,7 @@ object Burndowns extends Controller {
     }
   }
 
-  def getHistoricSnapshotCount(compositeID: Long) = {
+  def getBurndownCount(compositeID: Long) = {
 
     DB.withConnection("default") { implicit c =>
 
@@ -209,7 +229,7 @@ object Burndowns extends Controller {
     (Play.current.configuration.getString("phabricator.url"), existingComposite) match {
       case (Some(phabricatorUrl), Some(existingCompositeID)) => {
         Ok(views.html.burndown_by_project(existingCompositeID, title, sortedTasks,
-          phabricatorUrl, hoursToBurn, getHistoricSnapshotCount(existingCompositeID) > 0))
+          phabricatorUrl, hoursToBurn, getBurndownCount(existingCompositeID) > 0))
       }
       case (None, _) => BadRequest("phabricator.url not configured")
       case (_, None) => BadRequest("could not create project composite")
@@ -261,9 +281,6 @@ object Burndowns extends Controller {
   }
 
   def saveSnapshotViaAjax(compositeKey: String) = Action(parse.json) { request =>
-
-    Logger.info(s"Starting to save snapshot for composite #${compositeKey}")
-
     // TODO: this is brittle
     val compositeID = compositeKey.toLong
 
@@ -342,7 +359,7 @@ object Burndowns extends Controller {
 
   }
 
-  def getHistoricTasks(compositeID: String) = {
+  def getBurndownTasks(compositeID: String) = {
     val allEstimates = getTasksWithEstimates(compositeID)
 
     val estimatesByTask = allEstimates.groupBy(_.taskID).map(est => {
@@ -396,9 +413,9 @@ object Burndowns extends Controller {
     sumsByDate
   }
 
-  def historicData(compositeID: String) = Action {
+  def burndownData(compositeID: String) = Action {
 
-    val (estimateMatrix, dates) = getHistoricTasks(compositeID: String)
+    val (estimateMatrix, dates) = getBurndownTasks(compositeID: String)
 
     val summaries = generateSummaries(estimateMatrix)
 
@@ -415,8 +432,10 @@ object Burndowns extends Controller {
         }
       }
     }
+    
+    val compositeProjectName = compositeByID(compositeID.toLong).fold("unknown")(_.name)
 
-    Ok(views.html.burndown_history(estimateMatrix, dates, summaries, trend))
+    Ok(views.html.burndown_history(compositeProjectName, estimateMatrix, dates, summaries, trend))
   }
 
 }

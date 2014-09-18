@@ -7,7 +7,7 @@ GET     /                           	controllers.Application.index
 
 GET 	/burndowns/						controllers.Burndowns.index
 GET 	/burndowns/:projectID/			controllers.Burndowns.burndownByProject(projectID)
-GET		/burndowns/history/:compositeID	controllers.Burndowns.historicData(compositeID)
+GET		/burndowns/history/:compositeID	controllers.Burndowns.burndownData(compositeID)
 
 # AJAX
 POST	/burndowns/save/:compositeID	controllers.Burndowns.saveSnapshotViaAjax(compositeID)

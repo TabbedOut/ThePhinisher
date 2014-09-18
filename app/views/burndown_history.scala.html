@@ -1,12 +1,18 @@
+@(title:String, estimates: List[(String, List[Burndowns.DatedEstimate])], dates: List[org.joda.time.DateTime], 
+	summaries: List[Burndowns.DatedEstimate], trend:List[Long])
+
 @import org.joda.time.DateTime
 @import org.joda.time.format._
-
-@(estimates: List[(String, List[Burndowns.DatedEstimate])], dates: List[DateTime], 
-	summaries: List[Burndowns.DatedEstimate], trend:List[Long])
 
 @main("Burn it all down") {
 	
 	<div class="container">
+		<div class="row">
+			<div class="col-md-12">
+				<h1>@title</h1>
+			</div>
+		</div>
+	
 		<div class="row">
 			<div class="col-md-12">
 				<table class="table">
