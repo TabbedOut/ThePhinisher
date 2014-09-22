@@ -20,3 +20,5 @@ activator.bat
 application.conf
 data
 data-dev
+securesocial.conf
+.tmpBin

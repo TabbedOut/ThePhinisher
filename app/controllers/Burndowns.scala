@@ -2,24 +2,22 @@ package controllers
 
 import play.api._
 import play.api.mvc._
-
 import anorm._
 import play.api.db.DB
-
 import play.api.libs.json.Json
-
 import play.api.Play.current
 import org.joda.time.DateTime
 import utility.AnormExtension._
+import securesocial.core.RuntimeEnvironment
+import securesocial.core.SecureSocial
+import service.PhabUser
 
-object Burndowns extends Controller {
-
-  implicit def dateTimeOrdering: Ordering[DateTime] = Ordering.fromLessThan(_ isBefore _)
-
+object Burndowns {
   case class ProjectStub(name: String, phid: String)
   case class HistoricTaskEstimates(taskID: String, estimates: List[Long]) {}
   case class DatedEstimate(d: DateTime, e: Option[Long])
   case class Task(taskID: String, title: String, priority: Long, hours: Option[String], assignee: Option[String])
+
   case class CompositeProject(id: Long, projectIDs: List[String]) {
     def projectCluster = {
       s"{${projectIDs.mkString(",")}}"
@@ -56,6 +54,12 @@ object Burndowns extends Controller {
 
   }
 
+}
+
+class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends Controller with SecureSocial[PhabUser] {
+
+  implicit def dateTimeOrdering: Ordering[DateTime] = Ordering.fromLessThan(_ isBefore _)
+
   def openTasksByProject(projectID: String) = {
     val estimatedHoursKey = Play.current.configuration.getString("phabricator.estimatedHoursKey")
 
@@ -82,7 +86,7 @@ object Burndowns extends Controller {
       """).on('projectID -> projectID, 'estHours -> estimatedHoursKey)
 
       val tasks = tasksQuery().map(row =>
-        Task(row[String]("taskID"),
+        Burndowns.Task(row[String]("taskID"),
           row[String]("title"),
           row[Long]("priority"),
           row[Option[String]]("maniphest_customfieldstorage.fieldValue"),
@@ -93,8 +97,8 @@ object Burndowns extends Controller {
 
   }
 
-  def index = Action {
-    val projects = listAllProjects
+  def index = SecuredAction { implicit request =>
+    val projects = Burndowns.listAllProjects
 
     val composites = listAllComposites
 
@@ -126,7 +130,7 @@ object Burndowns extends Controller {
       val projects = sqlQuery().map(row => {
         val phids = row[String]("phids").split(",").toList
 
-        CompositeProject(row[Long]("composite_id"), phids)
+        Burndowns.CompositeProject(row[Long]("composite_id"), phids)
       }).toList
 
       projects
@@ -148,7 +152,7 @@ object Burndowns extends Controller {
       val project = sqlQuery().map(row => {
         val phids = row[String]("phids").split(",").toList
 
-        CompositeProject(row[Long]("composite_id"), phids)
+        Burndowns.CompositeProject(row[Long]("composite_id"), phids)
       }).toList.headOption
 
       project
@@ -208,13 +212,13 @@ object Burndowns extends Controller {
     }
   }
 
-  def burndownByProject(projectBase: String) = Action {
+  def burndownByProject(projectBase: String) = SecuredAction { implicit request =>
 
     val projectIDs = extractProjectIDs(projectBase)
 
     val existingComposite = detectCompositeBurndown(projectIDs)
 
-    val allProjects = listAllProjects
+    val allProjects = Burndowns.listAllProjects
 
     val title = allProjects.filter(pid => projectIDs.contains(pid.phid)).map(_.name).mkString(" / ")
 
@@ -265,7 +269,7 @@ object Burndowns extends Controller {
     }
   }
 
-  def saveTasksForSnapshot(snapshotID: Long, tasks: List[Task]) = {
+  def saveTasksForSnapshot(snapshotID: Long, tasks: List[Burndowns.Task]) = {
     DB.withConnection("default") { implicit c =>
       val insertQuery = SQL("""
           INSERT INTO burndown_tasks (burndown_id, task_id, remaining_estimate) 
@@ -280,7 +284,7 @@ object Burndowns extends Controller {
     }
   }
 
-  def saveSnapshotViaAjax(compositeKey: String) = Action(parse.json) { request =>
+  def saveSnapshotViaAjax(compositeKey: String) = SecuredAction(parse.json) { implicit request =>
     // TODO: this is brittle
     val compositeID = compositeKey.toLong
 
@@ -355,7 +359,7 @@ object Burndowns extends Controller {
       taskEstByDate = estimatesByTask.getOrElse(task, Map())
       finalEstimate = taskEstByDate.get(date).orElse(missingReplacement(task, date))
 
-    } yield (task, DatedEstimate(date, finalEstimate))
+    } yield (task, Burndowns.DatedEstimate(date, finalEstimate))
 
   }
 
@@ -382,9 +386,9 @@ object Burndowns extends Controller {
 
     val mappedMatrix = nextMatrix.map(e => (e._1, e._2.map(_._2).sortBy(_.d))).toList
 
-    def emptyCount(l: List[DatedEstimate]) = l.filter(_.e.isEmpty).length
+    def emptyCount(l: List[Burndowns.DatedEstimate]) = l.filter(_.e.isEmpty).length
 
-    def matrixSorter(a: (String, List[DatedEstimate]), b: (String, List[DatedEstimate])) = {
+    def matrixSorter(a: (String, List[Burndowns.DatedEstimate]), b: (String, List[Burndowns.DatedEstimate])) = {
 
       val aNones = emptyCount(a._2)
       val bNones = emptyCount(b._2)
@@ -401,19 +405,19 @@ object Burndowns extends Controller {
     (sortedMatrix, allDates)
   }
 
-  def generateSummaries(estimateMatrix: List[(String, List[DatedEstimate])]) = {
+  def generateSummaries(estimateMatrix: List[(String, List[Burndowns.DatedEstimate])]) = {
     val estimatesByDate = estimateMatrix.map(_._2).flatten.groupBy(_.d)
 
     val sumsByDate = estimatesByDate.map(ed => {
       val sum = ed._2.map(_.e.getOrElse(0L)).sum
 
-      DatedEstimate(ed._1, Option(sum))
+      Burndowns.DatedEstimate(ed._1, Option(sum))
     }).toList.sortBy(_.d)
 
     sumsByDate
   }
 
-  def burndownData(compositeID: String) = Action {
+  def burndownData(compositeID: String) = SecuredAction { implicit request =>
 
     val (estimateMatrix, dates) = getBurndownTasks(compositeID: String)
 
@@ -432,10 +436,9 @@ object Burndowns extends Controller {
         }
       }
     }
-    
-    
+
     val composite = compositeByID(compositeID.toLong)
-    
+
     val compositeProjectName = composite.fold("unknown")(_.name)
 
     Ok(views.html.burndown_history(compositeProjectName, composite.get.projectCluster, estimateMatrix, dates, summaries, trend))

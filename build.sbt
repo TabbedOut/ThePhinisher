@@ -15,5 +15,8 @@ libraryDependencies ++= Seq(
   "org.webjars" %% "webjars-play" % "2.3.0",
   "org.webjars" % "bootstrap-tokenfield" % "0.12.0",
   "org.webjars" % "typeaheadjs" % "0.10.4-1",
+  "ws.securesocial" %% "securesocial" % "master-SNAPSHOT",
   ws
 )
+ 
+resolvers += "sonatype snapshots" at "https://oss.sonatype.org/content/repositories/snapshots/"
