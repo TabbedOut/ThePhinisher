@@ -69,18 +69,12 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
         select concat('T',task.id) taskID, status, priority, title, description, projectPHIDs,
         	 cf.`fieldValue` as estimation, u.username as AssignedTo
         from phabricator_maniphest.maniphest_task task
-        /*
-        	left join phabricator_maniphest.maniphest_taskproject tp 
-        	  on tp.`taskPHID` = task.`phid`
-        	left join phabricator_maniphest.maniphest_nameindex p 
-        	  on p.`indexedObjectPHID`=tp.`projectPHID`
-        */
         	left join phabricator_maniphest.maniphest_customfieldstorage cf 
         		on task.phid=cf.`objectPHID` and fieldIndex={estHours}
         	left join phabricator_user.user u 
         		on u.phid = task.`ownerPHID`
         where
-        	status NOT IN (1,2,3,4,5) 
+        	status IN ('open') 
          	AND priority > 25
         	AND projectPHIDs LIKE {projectID}
         order by task.id asc;
