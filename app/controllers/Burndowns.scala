@@ -66,13 +66,15 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
     DB.withConnection("phabricator") { implicit c =>
       val tasksQuery = SQL(
         """
-        select concat('T',task.id) taskID, status, priority, title, description,
+        select concat('T',task.id) taskID, status, priority, title, description, projectPHIDs,
         	 cf.`fieldValue` as estimation, u.username as AssignedTo
         from phabricator_maniphest.maniphest_task task
+        /*
         	left join phabricator_maniphest.maniphest_taskproject tp 
-        		on tp.`taskPHID` = task.`phid`
+        	  on tp.`taskPHID` = task.`phid`
         	left join phabricator_maniphest.maniphest_nameindex p 
-        		on p.`indexedObjectPHID`=tp.`projectPHID`
+        	  on p.`indexedObjectPHID`=tp.`projectPHID`
+        */
         	left join phabricator_maniphest.maniphest_customfieldstorage cf 
         		on task.phid=cf.`objectPHID` and fieldIndex={estHours}
         	left join phabricator_user.user u 
@@ -80,10 +82,10 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
         where
         	status NOT IN (1,2,3,4,5) 
          	AND priority > 25
-        	AND tp.`projectPHID` = {projectID}
-        order by task.id asc
+        	AND projectPHIDs LIKE {projectID}
+        order by task.id asc;
         ;
-      """).on('projectID -> projectID, 'estHours -> estimatedHoursKey)
+      """).on('projectID -> s"%$projectID%", 'estHours -> estimatedHoursKey)
 
       val tasks = tasksQuery().map(row =>
         Burndowns.Task(row[String]("taskID"),
