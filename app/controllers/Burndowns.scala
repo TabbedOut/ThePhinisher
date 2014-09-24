@@ -73,10 +73,13 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
         		on task.phid=cf.`objectPHID` and fieldIndex={estHours}
         	left join phabricator_user.user u 
         		on u.phid = task.`ownerPHID`
+          left join phabricator_maniphest.edge e 
+        		on e.type=41 AND e.src=task.phid
         where
         	status IN ('open') 
          	AND priority > 25
-        	AND projectPHIDs LIKE {projectID}
+        	AND (projectPHIDs LIKE {projectID}
+            OR e.dst LIKE {projectID})
         order by task.id asc;
         ;
       """).on('projectID -> s"%$projectID%", 'estHours -> estimatedHoursKey)
