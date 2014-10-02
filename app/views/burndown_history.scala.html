@@ -1,5 +1,7 @@
 @(title:String, compositeBase:String, estimates: List[(String, List[Burndowns.DatedEstimate])], dates: List[org.joda.time.DateTime], 
-	summaries: List[Burndowns.DatedEstimate], trend:List[Long])
+	summaries: List[Burndowns.DatedEstimate], 
+	trend:List[Long],
+	progress: Int)
 
 @import org.joda.time.DateTime
 @import org.joda.time.format._
@@ -17,6 +19,16 @@
 		<div class="row">
 			<div class="col-md-12">
 				<h1>@title</h1>
+			</div>
+		</div>
+		
+		<div class="row">
+			<div class="col-md-12">
+				<div class="progress">
+  					<div class="progress-bar" role="progressbar" aria-valuenow="@{progress}" aria-valuemin="0" aria-valuemax="100" style="width: @{progress}%;">
+   		 				@{progress}%
+  					</div>
+				</div>
 			</div>
 		</div>
 	

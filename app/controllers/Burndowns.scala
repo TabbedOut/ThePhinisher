@@ -7,6 +7,7 @@ import play.api.db.DB
 import play.api.libs.json.Json
 import play.api.Play.current
 import org.joda.time.DateTime
+import org.joda.time.format._
 import utility.AnormExtension._
 import securesocial.core.RuntimeEnvironment
 import securesocial.core.SecureSocial
@@ -15,7 +16,12 @@ import service.PhabUser
 object Burndowns {
   case class ProjectStub(name: String, phid: String)
   case class HistoricTaskEstimates(taskID: String, estimates: List[Long]) {}
-  case class DatedEstimate(d: DateTime, e: Option[Long])
+  case class DatedEstimate(d: DateTime, e: Option[Long]) {
+    override def toString() = {
+      val dtfOut = DateTimeFormat.forPattern("MM/dd/yyyy")
+      s"${dtfOut.print(d)} # ${e.getOrElse(0)}"
+    }
+  }
   case class Task(taskID: String, title: String, priority: Long, hours: Option[String], assignee: Option[String])
 
   case class CompositeProject(id: Long, projectIDs: List[String]) {
@@ -416,6 +422,46 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
     sumsByDate
   }
 
+  case class TaskWithBoundaries(taskID: String, maximumEstimate: Burndowns.DatedEstimate, latestEstimate: Burndowns.DatedEstimate) {}
+
+  def getProjectProgress(estimateMatrix: List[(String, List[Burndowns.DatedEstimate])]): Int = {
+
+    val maxInit = Burndowns.DatedEstimate(DateTime.now(), None)
+    val curInit = Burndowns.DatedEstimate(new DateTime(0), None)
+
+    val detectBoundaries = estimateMatrix.map(entry => {
+
+      val taskID = entry._1
+      val estimates = entry._2
+
+      val finalResult = estimates.foldLeft(TaskWithBoundaries(taskID, maxInit, curInit)) {
+        (acc, next) => {
+            val l = if (acc.latestEstimate.d.isBefore(next.d)) next else acc.latestEstimate
+
+            val m = if (acc.maximumEstimate.e.getOrElse(-1L) < next.e.getOrElse(0L)) next else acc.maximumEstimate
+
+            TaskWithBoundaries(acc.taskID, m, l)
+          }
+      }
+      finalResult
+    })
+
+    case class EstiPair(max: Long, latest: Long)
+
+    val summable = detectBoundaries.map(twb => {
+      EstiPair(twb.maximumEstimate.e.getOrElse(0L), twb.latestEstimate.e.getOrElse(0L))
+    })
+
+    val sums = summable.reduce((a, b) => EstiPair(a.max + b.max, a.latest + b.latest))
+
+    val denominator = sums.max
+    val numerator = denominator - sums.latest
+
+    val fraction = (numerator * 100 / denominator)
+
+    fraction.toInt
+  }
+
   def burndownData(compositeID: String) = SecuredAction { implicit request =>
 
     val (estimateMatrix, dates) = getBurndownTasks(compositeID: String)
@@ -432,7 +478,8 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
           val lastWeek = lastWeekD.e.getOrElse(0L)
 
           thisWeek - lastWeek
-        }
+        } 
+        
       }
     }
 
@@ -440,7 +487,9 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
     val compositeProjectName = composite.fold("unknown")(_.name)
 
-    Ok(views.html.burndown_history(compositeProjectName, composite.get.projectCluster, estimateMatrix, dates, summaries, trend))
+    val progress = getProjectProgress(estimateMatrix)
+
+    Ok(views.html.burndown_history(compositeProjectName, composite.get.projectCluster, estimateMatrix, dates, summaries, trend, progress))
   }
 
 }
