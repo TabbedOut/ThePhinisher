@@ -7,7 +7,38 @@
 
 @main("Burn it all down") {
 
+	@* Scripts *@
+	
+	<script>
+		$(document).ready(function() {
+			var saveSuccess = function(data, status, jqXHR) {
+				$("#saveBurndown").hide();
+				$("#saveBurndownMessage").text("Saved");
+			};
+			
+			var saveFailure = function(jqXHR, status, error) {
+				alert("failure: " + status + " " + error);
+			}
+			
+			var saveBurndownOverAjax = function() {
+				 jsRoutes.controllers.Burndowns.saveSnapshotViaAjax(@{compositeID}).ajax({
+					 data : JSON.stringify("{}"),
+					 contentType : 'application/json'
+				 })
+				  .done( saveSuccess )
+				  .fail( saveFailure );
+			};
 
+			$("#saveConfirmed").click(function(){
+				saveBurndownOverAjax();
+			});
+		
+		});
+	</script>
+	
+ } {
+
+@* Content *@
 
 <div class="container">
 
@@ -31,7 +62,7 @@
 		
 		*@
 		<div class="col-md-2">
-		 	<button id="saveBurndown" type="submit" class="btn btn-info">
+		 	<button id="saveBurndown" type="submit" class="btn btn-info" data-toggle="modal" data-target="#saveConfirmation">
 		 		<span class="glyphicon glyphicon-floppy-disk"></span>
 		 	Save Snapshot</button>
 		 	<span id="saveBurndownMessage"></span>
@@ -41,24 +72,6 @@
 			 <a href="@routes.Burndowns.burndownData(compositeID.toString)">Previous Burndowns</a>
 			}
 		</div>
-		<script>
-			var saveSuccess = function(data, status, jqXHR) {
-				$("#saveBurndown").hide();
-				$("#saveBurndownMessage").text("Saved");
-			};
-			
-			var saveFailure = function(jqXHR, status, error) {
-				alert("failure: " + status + " " + error);
-			}
-			$("#saveBurndown").click(function(){
-				 jsRoutes.controllers.Burndowns.saveSnapshotViaAjax(@{compositeID}).ajax({
-					 data : JSON.stringify("{}"),
-					 contentType : 'application/json'
-				 })
-				  .done( saveSuccess )
-				  .fail( saveFailure );
-			});
-		</script>
 	</div>
 	<div class="row">
 		<div class="col-md-2">
@@ -116,15 +129,21 @@
 	</div>
 </div>
 
-<script>
-
-	$('#openAllTasks').click(function () {
-		var taskUrls = [ @{play.twirl.api.Html(tasks.map(task => "'" + phabUrl + task.taskID +"'" ).mkString(","))} ];
-		
-		for(index in taskUrls) {
-			var win = window.open(taskUrls[index], '_blank');
-			win.focus();
-		}
-	});
-</script>
-}
+	<div class="modal fade" id="saveConfirmation" tabindex="-1" role="dialog" aria-labelledby="saveConfirmTitle" aria-hidden="true">
+	  <div class="modal-dialog">
+	    <div class="modal-content">
+	      <div class="modal-header">
+	        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span><span class="sr-only">Close</span></button>
+	        <h4 class="modal-title" id="saveConfirmTitle">Save Burndown?</h4>
+	      </div>
+	      <div class="modal-body">
+	        <p>Would you like to save this burndown? There is no way to remove a burndown once saved.</p>
+	      </div>
+	      <div class="modal-footer">
+	        <button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
+	        <button type="button" class="btn btn-primary" id="saveConfirmed" data-dismiss="modal">Save burndown</button>
+	      </div>
+	    </div> 
+	  </div> 
+	</div> 
+} 
