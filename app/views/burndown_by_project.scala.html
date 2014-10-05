@@ -1,4 +1,4 @@
-@(compositeID: Long, title: String, 
+@(compositeID: Long, composite: Burndowns.CompositeProject, 
 	tasks: List[Burndowns.Task], 
 	phabUrl:String, 
 	totalHours:Long,
@@ -20,6 +20,10 @@
 				alert("failure: " + status + " " + error);
 			}
 			
+			var configurationSaveFailure = function(jqXHR, status, error) {
+				alert("failure: " + status + " " + jqXHR.responseJSON.message);
+			}
+			
 			var saveBurndownOverAjax = function() {
 				 jsRoutes.controllers.Burndowns.saveSnapshotViaAjax(@{compositeID}).ajax({
 					 data : JSON.stringify("{}"),
@@ -32,7 +36,51 @@
 			$("#saveConfirmed").click(function(){
 				saveBurndownOverAjax();
 			});
+			
+			var configureMode = false;
 		
+			var finishedConfigurationSave = function(data, status, jqXHR) {
+				var icon = $("#configureCompositeIcon");
+				icon.addClass("glyphicon-wrench").removeClass("glyphicon-floppy-disk");
+				$("#saveBurndownRow").show();
+				var editedTitle = $("#editedTitle");
+				editedTitle.hide();
+				var roTitle = $("#roTitle");
+				roTitle.text($("#editedTitleText").val());
+				roTitle.show();
+				$("#commitDateRow").hide();
+			};
+			
+		
+			$("#configureComposite").click(function(){
+			
+				var icon = $("#configureCompositeIcon");
+			
+				if (configureMode) {
+				
+					var metadata = {};
+					metadata["name"] = $("#editedTitleText").val();
+					metadata["target_date"] = $("#committedDateText").val()
+				
+					jsRoutes.controllers.Burndowns.updateCompositeMetadataViaAjax(@{compositeID}).ajax({
+						 data : JSON.stringify(metadata),
+						 contentType : 'application/json'
+					 })
+				  	.done( finishedConfigurationSave )
+				  	.fail( configurationSaveFailure );
+					
+					
+					
+				} else {
+					icon.addClass("glyphicon-floppy-disk").removeClass("glyphicon-wrench");
+					$("#saveBurndownRow").hide();
+					$("#editedTitle").show();
+					$("#roTitle").hide();
+					$("#commitDateRow").show();
+				}
+				
+				configureMode = !configureMode;
+			});
 		});
 	</script>
 	
@@ -45,32 +93,40 @@
 	<ol class="breadcrumb">
   		<li><a href="@routes.Burndowns.index">Burndowns Home</a></li>
   		<li class="active">Current Burndown</li>
+  		@if(hasPrevious) {
+  		<li><a href="@routes.Burndowns.burndownData(compositeID.toString)">Previous Burndowns</a></li>
+  		}
 	</ol>
 
 	<div class="row">
-		<div class="col-md-1">
-			<h1>@{compositeID}</h1>
+		<div class="col-md-11">
+			<h1 id="roTitle">@{composite.compositeName}</h1>
+			<div id="editedTitle"  style="display:none;" >
+				<label for="editedTitleText">Composite Name:</label>
+				<input id="editedTitleText" type="text" class="form-control"value="@{composite.compositeName}"></input>
+			</div>
 		</div>
-		<div class="col-md-11"><h1>@title</h1>
+		<div class="col-md-1">
+			<button id="configureComposite" type="submit" class="btn btn-info">
+				<span id="configureCompositeIcon" class="glyphicon glyphicon-wrench"></span>				
+			</button>
 		</div>
 	</div>
-	<div class="row">
-		@* This is a bad idea
-		<div class="col-md-2">
-		 	<button id="openAllTasks" type="submit" class="btn btn-info">Open Tasks New Tabs</button>
-		</div> 
-		
-		*@
+	
+	<div id="commitDateRow" class="row" style="display: none;">
+		<div class="col-md-3">
+		 	<br />
+			<label for="committedDateText">Committed Date (Y-M-D):</label>
+			<input id="committedDateText" type="text" class="form-control"value="@{composite.targetDateString.getOrElse("")}"></input>
+		</div>
+	</div>
+	
+	<div class="row" id="saveBurndownRow">
 		<div class="col-md-2">
 		 	<button id="saveBurndown" type="submit" class="btn btn-info" data-toggle="modal" data-target="#saveConfirmation">
 		 		<span class="glyphicon glyphicon-floppy-disk"></span>
 		 	Save Snapshot</button>
 		 	<span id="saveBurndownMessage"></span>
-		</div>
-		<div class="col-md-2">
-			@if(hasPrevious) {
-			 <a href="@routes.Burndowns.burndownData(compositeID.toString)">Previous Burndowns</a>
-			}
 		</div>
 	</div>
 	<div class="row">

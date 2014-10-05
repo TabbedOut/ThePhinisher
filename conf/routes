@@ -14,6 +14,7 @@ GET		/burndowns/history/:compositeID	@controllers.Burndowns.burndownData(composi
 
 # AJAX
 POST	/burndowns/save/:compositeID	@controllers.Burndowns.saveSnapshotViaAjax(compositeID)
+POST	/composite/:compositeID			@controllers.Burndowns.updateCompositeMetadataViaAjax(compositeID)
 GET		/jsroutes						controllers.JavascriptRouter.javascriptRoutes
 
 # Map static resources from the /public folder to the /assets URL path

@@ -4,7 +4,7 @@ import play.api._
 import play.api.mvc._
 import anorm._
 import play.api.db.DB
-import play.api.libs.json.Json
+import play.api.libs.json._
 import play.api.Play.current
 import org.joda.time.DateTime
 import org.joda.time.format._
@@ -24,19 +24,30 @@ object Burndowns {
   }
   case class Task(taskID: String, title: String, priority: Long, hours: Option[String], assignee: Option[String])
 
-  case class CompositeProject(id: Long, projectIDs: List[String]) {
+  case class CompositeProject(id: Long, projectIDs: List[String], name: Option[String], targetDate: Option[DateTime]) {
     def projectCluster = {
       s"{${projectIDs.mkString(",")}}"
     }
 
-    // A composite actually has a name field
-    // That should be used in the future
-    def name = {
-      val allProjects = listAllProjects
+    def compositeName = {
+      name match {
+        case Some(n) => n
+        case None => {
+          val allProjects = listAllProjects
 
-      val filteredStubs = allProjects.filter(p => projectIDs.contains(p.phid))
+          val filteredStubs = allProjects.filter(p => projectIDs.contains(p.phid))
 
-      filteredStubs.map(_.name).mkString(" / ")
+          filteredStubs.map(_.name).mkString(" / ")
+        }
+      }
+
+    }
+
+    def targetDateString(): Option[String] = {
+      targetDate flatMap { d =>
+        val dtfOut = DateTimeFormat.forPattern("yyyy-MM-dd")
+        Some(dtfOut.print(d))
+      }
     }
   }
 
@@ -126,16 +137,19 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
       val sqlQuery = SQL(
         """
-          SELECT composite_id, GROUP_CONCAT(phid) AS phids
-          FROM composite_projects
+          SELECT composite_id, GROUP_CONCAT(phid) AS phids, name, target_date
+          FROM composite_projects cp
+            LEFT JOIN composite c on c.id=cp.composite_id
           GROUP BY composite_id
           ;
         """)
 
       val projects = sqlQuery().map(row => {
         val phids = row[String]("phids").split(",").toList
+        val name = row[Option[String]]("name")
+        val targetDate = row[Option[DateTime]]("target_date")
 
-        Burndowns.CompositeProject(row[Long]("composite_id"), phids)
+        Burndowns.CompositeProject(row[Long]("composite_id"), phids, name, targetDate)
       }).toList
 
       projects
@@ -147,8 +161,9 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
       val sqlQuery = SQL(
         """
-          SELECT composite_id, GROUP_CONCAT(phid) AS phids
-          FROM composite_projects
+          SELECT composite_id, GROUP_CONCAT(phid) AS phids, name, target_date
+          FROM composite_projects cp
+            LEFT JOIN composite c on c.id=cp.composite_id 
           WHERE composite_id={composite_id}
           GROUP BY composite_id
           ;
@@ -156,8 +171,10 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
       val project = sqlQuery().map(row => {
         val phids = row[String]("phids").split(",").toList
+        val name = row[Option[String]]("name")
+        val targetDate = row[Option[DateTime]]("target_date")
 
-        Burndowns.CompositeProject(row[Long]("composite_id"), phids)
+        Burndowns.CompositeProject(row[Long]("composite_id"), phids, name, targetDate)
       }).toList.headOption
 
       project
@@ -225,8 +242,6 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
     val allProjects = Burndowns.listAllProjects
 
-    val title = allProjects.filter(pid => projectIDs.contains(pid.phid)).map(_.name).mkString(" / ")
-
     val tasks = projectIDs.map(pid => openTasksByProject(pid)).toList.flatten
 
     val (needsTriage, normalTasks) = tasks.partition(t => t.priority == 90 || t.hours.isEmpty)
@@ -237,8 +252,20 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
     (Play.current.configuration.getString("phabricator.url"), existingComposite) match {
       case (Some(phabricatorUrl), Some(existingCompositeID)) => {
-        Ok(views.html.burndown_by_project(existingCompositeID, title, sortedTasks,
-          phabricatorUrl, hoursToBurn, getBurndownCount(existingCompositeID) > 0))
+        // TODO: DANGER! get needs to be handled correctly
+        val composite = compositeByID(existingCompositeID)
+
+        composite match {
+          case Some(c) => {
+            val title = c.compositeName
+            val commitDateAsText = c.targetDateString()
+
+            Ok(views.html.burndown_by_project(existingCompositeID, c, sortedTasks,
+              phabricatorUrl, hoursToBurn, getBurndownCount(existingCompositeID) > 0))
+          }
+          case None => BadRequest("could not find composite project")
+        }
+
       }
       case (None, _) => BadRequest("phabricator.url not configured")
       case (_, None) => BadRequest("could not create project composite")
@@ -309,6 +336,69 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
         Ok(Json.obj("result" -> "saved"))
       }
     }
+  }
+
+  case class CompositeMetadata(name: String, target_date: String) {}
+  object CompositeMetadata {
+    implicit val format = Json.format[CompositeMetadata]
+  }
+
+  import scala.util.{ Try, Success, Failure }
+
+  def updateMetadata(compositeID: Long, metadata: CompositeMetadata): Try[Int] = {
+    val newName = if (metadata.name.trim().length() == 0) {
+      None
+    } else {
+      Option(metadata.name.trim())
+    }
+    val dtfIn = DateTimeFormat.forPattern("yyyy-MM-dd")
+
+    val newTarget = if (metadata.target_date.trim().length() == 0) {
+      Try(None)
+    } else {
+      // TODO: catch the exception here
+      val d = Try(dtfIn.parseDateTime(metadata.target_date))
+
+      d.flatMap(e => Try(Option(e)))
+      //      Option(d)
+    }
+
+    newTarget.flatMap(t => {
+
+      val result = DB.withConnection("default") { implicit c =>
+        val updateQuery = SQL(
+          """
+            UPDATE composite SET name={name},target_date={targetDate}
+            WHERE id={id};
+          """).on('name -> newName, 'targetDate -> t, 'id -> compositeID)
+
+        updateQuery.executeUpdate()
+      }
+
+      Success(result)
+    })
+  }
+
+  def updateCompositeMetadataViaAjax(compositeKey: String) = SecuredAction(parse.json) { implicit request =>
+
+    // TODO: this is brittle
+    val compositeID = compositeKey.toLong
+
+    val composeMetadataRequest = request.body.validate[CompositeMetadata]
+    composeMetadataRequest.fold(
+      errors => {
+        BadRequest(Json.obj("status" -> "KO", "message" -> JsError.toFlatJson(errors)))
+      },
+      metadata => {
+
+        updateMetadata(compositeID, metadata) match {
+          case Success(_) => Ok(Json.obj("status" -> "OK", "message" -> (s"Composite ${compositeKey} saved.")))
+          case Failure(f) => BadRequest(Json.obj("status" -> "KO", "message" -> f.getMessage()))
+        }
+        
+
+        
+      })
   }
 
   case class TaskEntry(taskID: String, estimate: Long, timestamp: DateTime)
@@ -435,7 +525,8 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
       val estimates = entry._2
 
       val finalResult = estimates.foldLeft(TaskWithBoundaries(taskID, maxInit, curInit)) {
-        (acc, next) => {
+        (acc, next) =>
+          {
             val l = if (acc.latestEstimate.d.isBefore(next.d)) next else acc.latestEstimate
 
             val m = if (acc.maximumEstimate.e.getOrElse(-1L) < next.e.getOrElse(0L)) next else acc.maximumEstimate
@@ -478,14 +569,14 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
           val lastWeek = lastWeekD.e.getOrElse(0L)
 
           thisWeek - lastWeek
-        } 
-        
+        }
+
       }
     }
 
     val composite = compositeByID(compositeID.toLong)
 
-    val compositeProjectName = composite.fold("unknown")(_.name)
+    val compositeProjectName = composite.fold("unknown")(_.compositeName)
 
     val progress = getProjectProgress(estimateMatrix)
 
