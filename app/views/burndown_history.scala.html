@@ -6,23 +6,6 @@
 
 @import org.joda.time.DateTime
 @import org.joda.time.format._ 
-
-		@labelledProgressRow(label: String, percent: Int, cls:String) = {
-		<div class="row">
-			<div class="col-md-2">
-				<b>@{label}</b>
-			</div>
-			<div class="col-md-10">
-				<div class="progress">
-				
-  					<div class="progress-bar @if(cls.length > 0){@cls}" role="progressbar" aria-valuenow="@{percent}" 
-  					aria-valuemin="0" aria-valuemax="100" style="width: @{percent}%;">
-   		 				@{percent}%
-  					</div>
-				</div>
-			</div>
-		</div>
-		}
 		
 
 @main("Burn it all down") { } {
@@ -37,16 +20,8 @@
 		<li class="active">Recorded Burndowns</li>
 	</ol>
 
-	<div class="row">
-		<div class="col-md-12">
-			<h1>@title</h1>
-		</div>
-	</div>
-		@labelledProgressRow("Feature Complete", progress, "")
-		
-		@if(timeSpent.isDefined){	
-			@labelledProgressRow("Time Spent", timeSpent.getOrElse(0), "progress-bar-warning")
-		}
+
+	@project_progress(title, progress, timeSpent)
 		
 	
 		<div class="row">

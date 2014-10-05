@@ -1,11 +1,16 @@
-@(message: String)
+@(message: String, projects: List[CompositeProject])
 
 @main("The Phinisher") { } {
 
     <div class="container">
+    
+    	@for(p <- projects) {
+    		@project_progress(p.compositeName, p.featureProgress, p.timeProgress)
+    	}
+    
 		<div class="row">
 			<div class="col-md-11">
-			You are probably looking for the <a href="@routes.Burndowns.index">burndowns</a>
+			For more information, check the <a href="@routes.Burndowns.index">burndowns</a>
 			</div>
 			<div class="col-md-1"><a class="btn" href="@securesocial.controllers.routes.LoginPage.logout()">Logout</a></div>
 		</div>

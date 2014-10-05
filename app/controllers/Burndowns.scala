@@ -15,40 +15,17 @@ import service.PhabUser
 
 import phabricator.Phabricator
 
+import models.CompositeProject
+import models.BurndownTask
+
+import scala.util.{ Try, Success, Failure }
+
 object Burndowns {
   case class HistoricTaskEstimates(taskID: String, estimates: List[Long]) {}
   case class DatedEstimate(d: DateTime, e: Option[Long]) {
     override def toString() = {
       val dtfOut = DateTimeFormat.forPattern("MM/dd/yyyy")
       s"${dtfOut.print(d)} # ${e.getOrElse(0)}"
-    }
-  }
-  case class TaskEntry(taskID: String, estimate: Long, timestamp: DateTime)
-
-  case class CompositeProject(id: Long, projectIDs: List[String], name: Option[String], targetDate: Option[DateTime]) {
-    def projectCluster = {
-      s"{${projectIDs.mkString(",")}}"
-    }
-
-    def compositeName = {
-      name match {
-        case Some(n) => n
-        case None => {
-          val allProjects = Phabricator.listAllProjects
-
-          val filteredStubs = allProjects.filter(p => projectIDs.contains(p.phid))
-
-          filteredStubs.map(_.name).mkString(" / ")
-        }
-      }
-
-    }
-
-    def targetDateString(): Option[String] = {
-      targetDate flatMap { d =>
-        val dtfOut = DateTimeFormat.forPattern("yyyy-MM-dd")
-        Some(dtfOut.print(d))
-      }
     }
   }
 
@@ -61,7 +38,7 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
   def index = SecuredAction { implicit request =>
     val projects = Phabricator.listAllProjects
 
-    val composites = listAllComposites
+    val composites = CompositeProject.listAll()
 
     Ok(views.html.burndown_index(projects, composites))
   }
@@ -77,106 +54,14 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
     }
   }
 
-  def listAllComposites() = {
-    DB.withConnection("default") { implicit c =>
-
-      val sqlQuery = SQL(
-        """
-          SELECT composite_id, GROUP_CONCAT(phid) AS phids, name, target_date
-          FROM composite_projects cp
-            LEFT JOIN composite c on c.id=cp.composite_id
-          GROUP BY composite_id
-          ;
-        """)
-
-      val projects = sqlQuery().map(row => {
-        val phids = row[String]("phids").split(",").toList
-        val name = row[Option[String]]("name")
-        val targetDate = row[Option[DateTime]]("target_date")
-
-        Burndowns.CompositeProject(row[Long]("composite_id"), phids, name, targetDate)
-      }).toList
-
-      projects
-    }
-  }
-
-  def compositeByID(compositeID: Long) = {
-    DB.withConnection("default") { implicit c =>
-
-      val sqlQuery = SQL(
-        """
-          SELECT composite_id, GROUP_CONCAT(phid) AS phids, name, target_date
-          FROM composite_projects cp
-            LEFT JOIN composite c on c.id=cp.composite_id 
-          WHERE composite_id={composite_id}
-          GROUP BY composite_id
-          ;
-        """).on('composite_id -> compositeID)
-
-      val project = sqlQuery().map(row => {
-        val phids = row[String]("phids").split(",").toList
-        val name = row[Option[String]]("name")
-        val targetDate = row[Option[DateTime]]("target_date")
-
-        Burndowns.CompositeProject(row[Long]("composite_id"), phids, name, targetDate)
-      }).toList.headOption
-
-      project
-    }
-  }
-
   def detectCompositeBurndown(projectIDs: List[String]): Option[Long] = {
-    val candidateProjects = listAllComposites
+    val candidateProjects = CompositeProject.listAll
 
     val matches = candidateProjects.filter(cp => {
       cp.projectIDs.toSet.equals(projectIDs.toSet)
     })
 
-    matches.headOption.fold(createNewComposite(projectIDs))(cp => Option(cp.id))
-  }
-
-  def createNewComposite(projectIDs: List[String]) = {
-    DB.withConnection("default") { implicit c =>
-
-      val newIDopt = SQL(
-        """
-          INSERT INTO composite VALUES ();
-        """).executeInsert()
-
-      // Note, this causes newIDopt to be the return
-      // which is intentional but probably could be clearer
-      newIDopt.flatMap(newID => {
-
-        val insertQuery = SQL(
-          """
-            INSERT INTO composite_projects (composite_id, phid) 
-            VALUES ({newComposite}, {phid});
-          """)
-
-        projectIDs.foreach(pid => {
-          insertQuery.on('newComposite -> newID, 'phid -> pid).executeInsert()
-        })
-
-        Some(newID)
-      })
-    }
-  }
-
-  def getBurndownCount(compositeID: Long) = {
-
-    DB.withConnection("default") { implicit c =>
-
-      val count = SQL(
-        """
-          SELECT count(id) as previous_count
-          FROM burndowns b
-          WHERE b.composite_id={composite_id}
-          ;
-        """).on('composite_id -> compositeID).as(SqlParser.long("previous_count").single)
-
-      count
-    }
+    matches.headOption.fold(CompositeProject.create(projectIDs))(cp => Option(cp.id))
   }
 
   def burndownByProject(projectBase: String) = SecuredAction { implicit request =>
@@ -198,7 +83,7 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
     (Play.current.configuration.getString("phabricator.url"), existingComposite) match {
       case (Some(phabricatorUrl), Some(existingCompositeID)) => {
         // TODO: DANGER! get needs to be handled correctly
-        val composite = compositeByID(existingCompositeID)
+        val composite = CompositeProject.getByID(existingCompositeID)
 
         composite match {
           case Some(c) => {
@@ -206,7 +91,7 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
             val commitDateAsText = c.targetDateString()
 
             Ok(views.html.burndown_by_project(existingCompositeID, c, sortedTasks,
-              phabricatorUrl, hoursToBurn, getBurndownCount(existingCompositeID) > 0))
+              phabricatorUrl, hoursToBurn, c.getBurndownCount() > 0))
           }
           case None => BadRequest("could not find composite project")
         }
@@ -236,16 +121,6 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
     }
   }
 
-  def createNewSnapshot(compositeID: Long) = {
-    DB.withConnection("default") { implicit c =>
-
-      SQL(
-        """
-          INSERT INTO burndowns (timestamp, composite_id) VALUES (NOW(), {composite});
-        """).on('composite -> compositeID).executeInsert()
-    }
-  }
-
   def saveTasksForSnapshot(snapshotID: Long, tasks: List[Phabricator.Task]) = {
     DB.withConnection("default") { implicit c =>
       val insertQuery = SQL("""
@@ -265,30 +140,36 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
     // TODO: this is brittle
     val compositeID = compositeKey.toLong
 
-    val snapshot = createNewSnapshot(compositeID)
+    val composite = CompositeProject.getByID(compositeID)
 
-    snapshot match {
-      case None => BadRequest(Json.obj("result" -> "couldn't create snapshot"))
-      case Some(snapshotID) => {
-        val projectIDs = projectsFromComposite(compositeID)
+    composite match {
+      case None => BadRequest(Json.obj("status" -> "KO", "message" -> "invalid composite id"))
+      case Some(c) => {
+        val snapshot = c.saveBurndownSnapshot
 
-        val tasks = projectIDs.map(pid => Phabricator.openTasksByProjectID(pid)).toList.flatten.distinct
+        snapshot match {
+          case None => BadRequest(Json.obj("status" -> "KO", "message" -> "couldn't create snapshot"))
+          case Some(snapshotID) => {
+            val projectIDs = projectsFromComposite(compositeID)
 
-        val estimatedTasks = tasks.filter(_.hours.isDefined)
+            val tasks = projectIDs.map(pid => Phabricator.openTasksByProjectID(pid)).toList.flatten.distinct
 
-        saveTasksForSnapshot(snapshotID, estimatedTasks)
+            val estimatedTasks = tasks.filter(_.hours.isDefined)
 
-        Ok(Json.obj("result" -> "saved"))
+            saveTasksForSnapshot(snapshotID, estimatedTasks)
+
+            Ok(Json.obj("result" -> "saved"))
+          }
+        }
       }
     }
+
   }
 
   case class CompositeMetadata(name: String, target_date: String) {}
   object CompositeMetadata {
     implicit val format = Json.format[CompositeMetadata]
   }
-
-  import scala.util.{ Try, Success, Failure }
 
   def updateMetadata(compositeID: Long, metadata: CompositeMetadata): Try[Int] = {
     val newName = if (metadata.name.trim().length() == 0) {
@@ -344,30 +225,6 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
       })
   }
 
-  def getTasksWithEstimates(compositeID: String) = {
-    DB.withConnection("default") { implicit c =>
-
-      val sqlQuery = SQL(
-        """
-          SELECT task_id, remaining_estimate, timestamp
-          FROM burndown_tasks bt
-            LEFT JOIN  burndowns b on b.id=bt.burndown_id
-          WHERE b.composite_id={composite_id}
-          ;
-        """).on('composite_id -> compositeID)
-
-      val taskEstimates = sqlQuery().map(row => {
-        Burndowns.TaskEntry(
-          row[String]("task_id"),
-          row[Long]("remaining_estimate"),
-          row[DateTime]("timestamp"))
-
-      }).toList
-
-      taskEstimates
-    }
-  }
-
   def generateBalancedEstimateMatrix(allDates: List[DateTime],
     allTasks: List[String],
     estimatesByTask: Map[String, Map[DateTime, Long]]) = {
@@ -399,8 +256,8 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
   }
 
-  def getBurndownTasks(compositeID: String) = {
-    val allEstimates = getTasksWithEstimates(compositeID)
+  def getBurndownTasks(composite: CompositeProject) = {
+    val allEstimates = composite.getTasksWithEstimates()
 
     val estimatesByTask = allEstimates.groupBy(_.taskID).map(est => {
       val taskID = est._1
@@ -411,7 +268,7 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
       (taskID -> estMap)
     })
 
-    def mappedDistinct[B](f: Burndowns.TaskEntry => B): List[B] = allEstimates.map(f).distinct.toList
+    def mappedDistinct[B](f: BurndownTask => B): List[B] = allEstimates.map(f).distinct.toList
 
     val allDates = mappedDistinct(_.timestamp)
     val allTasks = mappedDistinct(_.taskID)
@@ -441,18 +298,6 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
     (sortedMatrix, allDates)
   }
 
-  // This should be moved to a configuration parameter
-  val WORKDAY_HOURS = 7
-
-  def allDates(current: DateTime, terminus: DateTime): List[DateTime] = {
-    if (current.isBefore(terminus)) {
-      val next = current.plusDays(1)
-      current :: allDates(next, terminus)
-    } else {
-      Nil
-    }
-  }
-
   def generateSummaries(estimateMatrix: List[(String, List[Burndowns.DatedEstimate])]) = {
     val estimatesByDate = estimateMatrix.map(_._2).flatten.groupBy(_.d)
 
@@ -467,97 +312,39 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
   case class TaskWithBoundaries(taskID: String, maximumEstimate: Burndowns.DatedEstimate, latestEstimate: Burndowns.DatedEstimate) {}
 
-  def getTimeSpentOnProject(composite: Burndowns.CompositeProject, earliestEstimate: DateTime): Option[Int] = {
-    composite.targetDate.flatMap(td => {
-      if (td.isBefore(earliestEstimate)) {
-        None
-      } else {
-
-        val dateRange = allDates(earliestEstimate, td)
-        
-        // Sat = 6, Sun = 7
-        val workDays = dateRange.filter(_.getDayOfWeek() < 6)
-        
-        val elapsedDays = workDays.filter(_.isBefore(new DateTime))
-        val numer = elapsedDays.map(_ => WORKDAY_HOURS).sum * 100
-        val denom = workDays.map(_ => WORKDAY_HOURS).sum
-
-        val asFraction = numer / denom
-
-        Option(asFraction)
-      }
-    })
-  }
-
-  def getProjectProgress(estimateMatrix: List[(String, List[Burndowns.DatedEstimate])]): Int = {
-
-    val maxInit = Burndowns.DatedEstimate(DateTime.now(), None)
-    val curInit = Burndowns.DatedEstimate(new DateTime(0), None)
-
-    val detectBoundaries = estimateMatrix.map(entry => {
-
-      val taskID = entry._1
-      val estimates = entry._2
-
-      val finalResult = estimates.foldLeft(TaskWithBoundaries(taskID, maxInit, curInit)) {
-        (acc, next) =>
-          {
-            val l = if (acc.latestEstimate.d.isBefore(next.d)) next else acc.latestEstimate
-
-            val m = if (acc.maximumEstimate.e.getOrElse(-1L) < next.e.getOrElse(0L)) next else acc.maximumEstimate
-
-            TaskWithBoundaries(acc.taskID, m, l)
-          }
-      }
-      finalResult
-    })
-
-    case class EstiPair(max: Long, latest: Long)
-
-    val summable = detectBoundaries.map(twb => {
-      EstiPair(twb.maximumEstimate.e.getOrElse(0L), twb.latestEstimate.e.getOrElse(0L))
-    })
-
-    val sums = summable.reduce((a, b) => EstiPair(a.max + b.max, a.latest + b.latest))
-
-    val denominator = sums.max
-    val numerator = denominator - sums.latest
-
-    val fraction = (numerator * 100 / denominator)
-
-    fraction.toInt
-  }
-
   def burndownData(compositeID: String) = SecuredAction { implicit request =>
 
-    val (estimateMatrix, dates) = getBurndownTasks(compositeID: String)
+    val compositeOption = CompositeProject.getByID(compositeID.toLong)
 
-    val summaries = generateSummaries(estimateMatrix)
+    compositeOption.fold(
+      BadRequest(Json.obj("status" -> "KO", "message" -> "invalid composite id")))({
+        c =>
 
-    val trend = if (summaries.isEmpty) {
-      Nil
-    } else {
-      val summariesOffset = summaries.head :: (summaries.dropRight(1))
-      summaries.zip(summariesOffset).map {
-        case (thisWeekD, lastWeekD) => {
-          val thisWeek = thisWeekD.e.getOrElse(0L)
-          val lastWeek = lastWeekD.e.getOrElse(0L)
+          val (estimateMatrix, dates) = getBurndownTasks(c)
 
-          thisWeek - lastWeek
-        }
+          val summaries = generateSummaries(estimateMatrix)
 
-      }
-    }
+          val trend = if (summaries.isEmpty) {
+            Nil
+          } else {
+            val summariesOffset = summaries.head :: (summaries.dropRight(1))
+            summaries.zip(summariesOffset).map {
+              case (thisWeekD, lastWeekD) => {
+                val thisWeek = thisWeekD.e.getOrElse(0L)
+                val lastWeek = lastWeekD.e.getOrElse(0L)
 
-    val composite = compositeByID(compositeID.toLong)
+                thisWeek - lastWeek
+              }
+            }
+          }
 
-    val compositeProjectName = composite.fold("unknown")(_.compositeName)
+          val compositeProjectName = c.compositeName
+          val featureProgress = c.featureProgress
 
-    val progress = getProjectProgress(estimateMatrix)
+          val timeSpent = c.timeProgress
 
-    val timeSpent = composite.flatMap(c => getTimeSpentOnProject(c, dates.min))
-
-    Ok(views.html.burndown_history(compositeProjectName, composite.get.projectCluster, estimateMatrix, dates, summaries, trend, progress, timeSpent))
+          Ok(views.html.burndown_history(compositeProjectName, c.projectCluster, estimateMatrix, dates, summaries, trend, featureProgress, timeSpent))
+      })
   }
 
 }
