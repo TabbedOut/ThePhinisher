@@ -13,8 +13,9 @@ import securesocial.core.RuntimeEnvironment
 import securesocial.core.SecureSocial
 import service.PhabUser
 
+import phabricator.Phabricator
+
 object Burndowns {
-  case class ProjectStub(name: String, phid: String)
   case class HistoricTaskEstimates(taskID: String, estimates: List[Long]) {}
   case class DatedEstimate(d: DateTime, e: Option[Long]) {
     override def toString() = {
@@ -22,7 +23,6 @@ object Burndowns {
       s"${dtfOut.print(d)} # ${e.getOrElse(0)}"
     }
   }
-  case class Task(taskID: String, title: String, priority: Long, hours: Option[String], assignee: Option[String])
   case class TaskEntry(taskID: String, estimate: Long, timestamp: DateTime)
 
   case class CompositeProject(id: Long, projectIDs: List[String], name: Option[String], targetDate: Option[DateTime]) {
@@ -34,7 +34,7 @@ object Burndowns {
       name match {
         case Some(n) => n
         case None => {
-          val allProjects = listAllProjects
+          val allProjects = Phabricator.listAllProjects
 
           val filteredStubs = allProjects.filter(p => projectIDs.contains(p.phid))
 
@@ -52,70 +52,14 @@ object Burndowns {
     }
   }
 
-  def listAllProjects = {
-    DB.withConnection("phabricator") { implicit c =>
-
-      val sqlQuery = SQL(
-        """
-          SELECT name, phid 
-          FROM phabricator_project.project
-          
-          WHERE status=0
-          ORDER BY dateCreated DESC;
-        """)
-
-      val projects = sqlQuery().map(row =>
-        ProjectStub(row[String]("name"), row[String]("phid"))).toList
-
-      projects
-    }
-
-  }
-
 }
 
 class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends Controller with SecureSocial[PhabUser] {
 
   implicit def dateTimeOrdering: Ordering[DateTime] = Ordering.fromLessThan(_ isBefore _)
 
-  def openTasksByProject(projectID: String) = {
-    val estimatedHoursKey = Play.current.configuration.getString("phabricator.estimatedHoursKey")
-
-    DB.withConnection("phabricator") { implicit c =>
-      val tasksQuery = SQL(
-        """
-        select concat('T',task.id) taskID, status, priority, title, description, projectPHIDs,
-        	 cf.`fieldValue` as estimation, u.username as AssignedTo
-        from phabricator_maniphest.maniphest_task task
-        	left join phabricator_maniphest.maniphest_customfieldstorage cf 
-        		on task.phid=cf.`objectPHID` and fieldIndex={estHours}
-        	left join phabricator_user.user u 
-        		on u.phid = task.`ownerPHID`
-          left join phabricator_maniphest.edge e 
-        		on e.type=41 AND e.src=task.phid
-        where
-        	status IN ('open') 
-         	AND priority > 25
-        	AND (projectPHIDs LIKE {projectID}
-            OR e.dst LIKE {projectID})
-        order by task.id asc;
-        ;
-      """).on('projectID -> s"%$projectID%", 'estHours -> estimatedHoursKey)
-
-      val tasks = tasksQuery().map(row =>
-        Burndowns.Task(row[String]("taskID"),
-          row[String]("title"),
-          row[Long]("priority"),
-          row[Option[String]]("maniphest_customfieldstorage.fieldValue"),
-          row[Option[String]]("user.userName")))
-
-      tasks.toList
-    }
-
-  }
-
   def index = SecuredAction { implicit request =>
-    val projects = Burndowns.listAllProjects
+    val projects = Phabricator.listAllProjects
 
     val composites = listAllComposites
 
@@ -241,9 +185,9 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
     val existingComposite = detectCompositeBurndown(projectIDs)
 
-    val allProjects = Burndowns.listAllProjects
+    val allProjects = Phabricator.listAllProjects
 
-    val tasks = projectIDs.map(pid => openTasksByProject(pid)).toList.flatten
+    val tasks = projectIDs.map(pid => Phabricator.openTasksByProjectID(pid)).toList.flatten
 
     val (needsTriage, normalTasks) = tasks.partition(t => t.priority == 90 || t.hours.isEmpty)
 
@@ -302,7 +246,7 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
     }
   }
 
-  def saveTasksForSnapshot(snapshotID: Long, tasks: List[Burndowns.Task]) = {
+  def saveTasksForSnapshot(snapshotID: Long, tasks: List[Phabricator.Task]) = {
     DB.withConnection("default") { implicit c =>
       val insertQuery = SQL("""
           INSERT INTO burndown_tasks (burndown_id, task_id, remaining_estimate) 
@@ -328,7 +272,7 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
       case Some(snapshotID) => {
         val projectIDs = projectsFromComposite(compositeID)
 
-        val tasks = projectIDs.map(pid => openTasksByProject(pid)).toList.flatten.distinct
+        val tasks = projectIDs.map(pid => Phabricator.openTasksByProjectID(pid)).toList.flatten.distinct
 
         val estimatedTasks = tasks.filter(_.hours.isDefined)
 
