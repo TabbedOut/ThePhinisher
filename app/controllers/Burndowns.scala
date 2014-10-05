@@ -23,6 +23,7 @@ object Burndowns {
     }
   }
   case class Task(taskID: String, title: String, priority: Long, hours: Option[String], assignee: Option[String])
+  case class TaskEntry(taskID: String, estimate: Long, timestamp: DateTime)
 
   case class CompositeProject(id: Long, projectIDs: List[String], name: Option[String], targetDate: Option[DateTime]) {
     def projectCluster = {
@@ -395,13 +396,9 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
           case Success(_) => Ok(Json.obj("status" -> "OK", "message" -> (s"Composite ${compositeKey} saved.")))
           case Failure(f) => BadRequest(Json.obj("status" -> "KO", "message" -> f.getMessage()))
         }
-        
 
-        
       })
   }
-
-  case class TaskEntry(taskID: String, estimate: Long, timestamp: DateTime)
 
   def getTasksWithEstimates(compositeID: String) = {
     DB.withConnection("default") { implicit c =>
@@ -416,7 +413,7 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
         """).on('composite_id -> compositeID)
 
       val taskEstimates = sqlQuery().map(row => {
-        TaskEntry(
+        Burndowns.TaskEntry(
           row[String]("task_id"),
           row[Long]("remaining_estimate"),
           row[DateTime]("timestamp"))
@@ -470,7 +467,7 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
       (taskID -> estMap)
     })
 
-    def mappedDistinct[B](f: TaskEntry => B): List[B] = allEstimates.map(f).distinct.toList
+    def mappedDistinct[B](f: Burndowns.TaskEntry => B): List[B] = allEstimates.map(f).distinct.toList
 
     val allDates = mappedDistinct(_.timestamp)
     val allTasks = mappedDistinct(_.taskID)
@@ -500,6 +497,18 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
     (sortedMatrix, allDates)
   }
 
+  // This should be moved to a configuration parameter
+  val WORKDAY_HOURS = 7
+
+  def allDates(current: DateTime, terminus: DateTime): List[DateTime] = {
+    if (current.isBefore(terminus)) {
+      val next = current.plusDays(1)
+      current :: allDates(next, terminus)
+    } else {
+      Nil
+    }
+  }
+
   def generateSummaries(estimateMatrix: List[(String, List[Burndowns.DatedEstimate])]) = {
     val estimatesByDate = estimateMatrix.map(_._2).flatten.groupBy(_.d)
 
@@ -513,6 +522,28 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
   }
 
   case class TaskWithBoundaries(taskID: String, maximumEstimate: Burndowns.DatedEstimate, latestEstimate: Burndowns.DatedEstimate) {}
+
+  def getTimeSpentOnProject(composite: Burndowns.CompositeProject, earliestEstimate: DateTime): Option[Int] = {
+    composite.targetDate.flatMap(td => {
+      if (td.isBefore(earliestEstimate)) {
+        None
+      } else {
+
+        val dateRange = allDates(earliestEstimate, td)
+        
+        // Sat = 6, Sun = 7
+        val workDays = dateRange.filter(_.getDayOfWeek() < 6)
+        
+        val elapsedDays = workDays.filter(_.isBefore(new DateTime))
+        val numer = elapsedDays.map(_ => WORKDAY_HOURS).sum * 100
+        val denom = workDays.map(_ => WORKDAY_HOURS).sum
+
+        val asFraction = numer / denom
+
+        Option(asFraction)
+      }
+    })
+  }
 
   def getProjectProgress(estimateMatrix: List[(String, List[Burndowns.DatedEstimate])]): Int = {
 
@@ -580,7 +611,9 @@ class Burndowns(override implicit val env: RuntimeEnvironment[PhabUser]) extends
 
     val progress = getProjectProgress(estimateMatrix)
 
-    Ok(views.html.burndown_history(compositeProjectName, composite.get.projectCluster, estimateMatrix, dates, summaries, trend, progress))
+    val timeSpent = composite.flatMap(c => getTimeSpentOnProject(c, dates.min))
+
+    Ok(views.html.burndown_history(compositeProjectName, composite.get.projectCluster, estimateMatrix, dates, summaries, trend, progress, timeSpent))
   }
 
 }

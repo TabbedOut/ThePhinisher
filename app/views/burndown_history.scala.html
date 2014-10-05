@@ -1,36 +1,53 @@
-@(title:String, compositeBase:String, estimates: List[(String, List[Burndowns.DatedEstimate])], dates: List[org.joda.time.DateTime], 
-	summaries: List[Burndowns.DatedEstimate], 
-	trend:List[Long],
-	progress: Int)
+@(title:String, compositeBase:String, 
+	estimates: List[(String, List[Burndowns.DatedEstimate])], 
+	dates: List[org.joda.time.DateTime],
+	summaries: List[Burndowns.DatedEstimate], trend:List[Long], 
+	progress: Int, timeSpent: Option[Int]) 
 
 @import org.joda.time.DateTime
-@import org.joda.time.format._
+@import org.joda.time.format._ 
 
-@main("Burn it all down") { } {
-	
-	<div class="container">
-	
-		<ol class="breadcrumb">
-  			<li><a href="@routes.Burndowns.index">Burndowns Home</a></li>
-  			<li><a href="@routes.Burndowns.burndownByProject(compositeBase)">Current Burndown</a></li>
-  			<li class="active">Recorded Burndowns</li>
-		</ol>
-	
+		@labelledProgressRow(label: String, percent: Int, cls:String) = {
 		<div class="row">
-			<div class="col-md-12">
-				<h1>@title</h1>
+			<div class="col-md-2">
+				<b>@{label}</b>
 			</div>
-		</div>
-		
-		<div class="row">
-			<div class="col-md-12">
+			<div class="col-md-10">
 				<div class="progress">
-  					<div class="progress-bar" role="progressbar" aria-valuenow="@{progress}" aria-valuemin="0" aria-valuemax="100" style="width: @{progress}%;">
-   		 				@{progress}%
+				
+  					<div class="progress-bar @if(cls.length > 0){@cls}" role="progressbar" aria-valuenow="@{percent}" 
+  					aria-valuemin="0" aria-valuemax="100" style="width: @{percent}%;">
+   		 				@{percent}%
   					</div>
 				</div>
 			</div>
 		</div>
+		}
+		
+
+@main("Burn it all down") { } {
+
+
+
+<div class="container">
+
+	<ol class="breadcrumb">
+		<li><a href="@routes.Burndowns.index">Burndowns Home</a></li>
+		<li><a href="@routes.Burndowns.burndownByProject(compositeBase)">Current Burndown</a></li>
+		<li class="active">Recorded Burndowns</li>
+	</ol>
+
+	<div class="row">
+		<div class="col-md-12">
+			<h1>@title</h1>
+		</div>
+	</div>
+		@labelledProgressRow("Feature Complete", progress, "")
+		
+		@if(timeSpent.isDefined){	
+			@labelledProgressRow("Time Spent", timeSpent.getOrElse(0), "progress-bar-warning")
+		}
+		
 	
 		<div class="row">
 			<div class="col-md-12">
